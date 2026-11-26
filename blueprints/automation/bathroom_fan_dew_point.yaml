@@ -11,8 +11,12 @@ blueprint:
     optional quiet-hours window and an optional window contact sensor.
 
 
-    Requires a reference dew point sensor for the rest of the house (see the
-    README for a ready-made template sensor).
+    The reference dew point ("what is normal here") can come from, in order of
+    preference: (1) a sensor with the average dew point of the rest of the house,
+    (2) a sensor with the bathroom's own 24 h median (a `statistics` helper), or
+    (3) a fixed value in °C as a last resort. See the README for details and for
+    the problems of a fixed value.
+  source_url: https://github.com/DidacChaves/ha-bathroom-fan-blueprint/blob/main/blueprints/automation/bathroom_fan_dew_point.yaml
   domain: automation
   input:
     extractor:
@@ -33,12 +37,25 @@ blueprint:
           domain: sensor
           device_class: humidity
     ref_dew:
-      name: House reference dew point
-      description: Shared template sensor (average dew point of the other rooms).
+      name: Reference dew point sensor (optional)
+      description: >
+        Sensor with the "normal" dew point: the average of the rest of the house,
+        or the bathroom's own 24 h median (statistics helper). Leave empty to use
+        the fixed value below instead.
+      default: ""
       selector:
         entity:
           domain: sensor
           device_class: temperature
+    ref_manual:
+      name: Fixed reference dew point (°C)
+      description: >
+        Only used when no reference sensor is selected. Warning: the real dew
+        point of a home changes with the seasons, so a fixed value needs
+        re-tuning (see the README). Prefer a sensor.
+      default: 10
+      selector:
+        number: {min: -5, max: 30, step: 0.5, unit_of_measurement: "°C"}
     window:
       name: Window sensor (optional)
       description: "'on' = open. While the window is open the fan is not started."
@@ -96,6 +113,7 @@ trigger_variables:
   bath_dew: !input bath_dew
   bath_humidity: !input bath_humidity
   ref_dew: !input ref_dew
+  ref_manual: !input ref_manual
   on_delta: !input on_delta
   off_delta: !input off_delta
   humidity_high: !input humidity_high
@@ -104,8 +122,9 @@ trigger:
   - id: high
     platform: template
     value_template: >
-      {{ is_number(states(bath_dew)) and is_number(states(ref_dew))
-         and (states(bath_dew)|float - states(ref_dew)|float) >= on_delta|float }}
+      {% set r = states(ref_dew) if ref_dew != '' else ref_manual %}
+      {{ is_number(states(bath_dew)) and is_number(r)
+         and (states(bath_dew)|float - r|float) >= on_delta|float }}
     for: "00:01:00"
   - id: high
     platform: template
@@ -121,6 +140,7 @@ variables:
   extractor: !input extractor
   bath_dew: !input bath_dew
   ref_dew: !input ref_dew
+  ref_manual: !input ref_manual
   off_delta: !input off_delta
   off_delay: !input off_delay
   min_run: !input min_run
@@ -161,8 +181,9 @@ action:
   - wait_for_trigger:
       - platform: template
         value_template: >
-          {{ not is_number(states(bath_dew)) or not is_number(states(ref_dew))
-             or (states(bath_dew)|float - states(ref_dew)|float) <= off_delta|float }}
+          {% set r = states(ref_dew) if ref_dew != '' else ref_manual %}
+          {{ not is_number(states(bath_dew)) or not is_number(r)
+             or (states(bath_dew)|float - r|float) <= off_delta|float }}
         for:
           minutes: "{{ off_delay|int }}"
     timeout:
