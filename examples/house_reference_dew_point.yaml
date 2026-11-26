@@ -1,0 +1,29 @@
+# Example template sensor: average dew point of the rest of the house.
+#
+# Add it under `template:` in your YAML configuration (or recreate it as a
+# template helper in the UI). Edit the list of (temperature, humidity) pairs to
+# match YOUR sensors: use rooms that are NOT bathrooms. Unavailable sensors are
+# ignored; the sensor becomes unavailable if fewer than 2 pairs have data.
+#
+# Dew point uses the Magnus formula (a = 17.62, b = 243.12 °C).
+- sensor:
+    - name: "House reference dew point"
+      unique_id: house_reference_dew_point
+      unit_of_measurement: "°C"
+      device_class: temperature
+      state_class: measurement
+      state: >
+        {% set pairs = [
+          ('sensor.living_room_temperature',  'sensor.living_room_humidity'),
+          ('sensor.bedroom_temperature',      'sensor.bedroom_humidity'),
+          ('sensor.office_temperature',       'sensor.office_humidity'),
+          ('sensor.hallway_temperature',      'sensor.hallway_humidity') ] %}
+        {% set ns = namespace(v=[]) %}
+        {% for t, h in pairs %}
+          {% if is_number(states(t)) and is_number(states(h)) and states(h)|float > 0 %}
+            {% set T = states(t)|float %}{% set RH = states(h)|float %}
+            {% set g = log(RH/100) + (17.62*T)/(243.12+T) %}
+            {% set ns.v = ns.v + [ (243.12*g)/(17.62-g) ] %}
+          {% endif %}
+        {% endfor %}
+        {{ (ns.v|sum/ns.v|length)|round(1) if ns.v|length >= 2 else 'unavailable' }}

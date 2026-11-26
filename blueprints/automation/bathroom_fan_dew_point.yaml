@@ -1,0 +1,181 @@
+blueprint:
+  name: Bathroom extractor fan by dew point
+  description: >
+    Turns the bathroom extractor fan on when the bathroom dew point rises well
+    above the rest of the house (someone is showering) and turns it off when it
+    returns to normal.
+
+
+    Only controls the cycles it started itself: if you switch the fan on by hand,
+    the blueprint will not switch it off. Includes a hard maximum run time, an
+    optional quiet-hours window and an optional window contact sensor.
+
+
+    Requires a reference dew point sensor for the rest of the house (see the
+    README for a ready-made template sensor).
+  domain: automation
+  input:
+    extractor:
+      name: Extractor fan (relay)
+      selector:
+        entity:
+          domain: switch
+    bath_dew:
+      name: Bathroom dew point
+      selector:
+        entity:
+          domain: sensor
+          device_class: temperature
+    bath_humidity:
+      name: Bathroom humidity (emergency backup)
+      selector:
+        entity:
+          domain: sensor
+          device_class: humidity
+    ref_dew:
+      name: House reference dew point
+      description: Shared template sensor (average dew point of the other rooms).
+      selector:
+        entity:
+          domain: sensor
+          device_class: temperature
+    window:
+      name: Window sensor (optional)
+      description: "'on' = open. While the window is open the fan is not started."
+      default: ""
+      selector:
+        entity:
+          domain: binary_sensor
+    on_delta:
+      name: Difference to turn ON (°C above the house)
+      default: 8
+      selector:
+        number: {min: 2, max: 20, step: 0.5, unit_of_measurement: "°C"}
+    off_delta:
+      name: Difference to turn OFF (°C above the house)
+      default: 5
+      selector:
+        number: {min: 0, max: 15, step: 0.5, unit_of_measurement: "°C"}
+    humidity_high:
+      name: Emergency absolute humidity (%)
+      description: Starts the fan if bathroom humidity stays at or above this value.
+      default: 80
+      selector:
+        number: {min: 60, max: 100, step: 1, unit_of_measurement: "%"}
+    off_delay:
+      name: Minutes below the threshold before turning off
+      default: 3
+      selector:
+        number: {min: 1, max: 30, unit_of_measurement: min}
+    min_run:
+      name: Minimum run time (min)
+      default: 10
+      selector:
+        number: {min: 1, max: 60, unit_of_measurement: min}
+    max_run:
+      name: Maximum run time (min, safety limit)
+      default: 60
+      selector:
+        number: {min: 10, max: 240, unit_of_measurement: min}
+    night_start:
+      name: Quiet hours start
+      description: The fan will not start between start and end. A cycle already running is not interrupted.
+      default: "00:00:00"
+      selector:
+        time:
+    night_end:
+      name: Quiet hours end
+      default: "06:00:00"
+      selector:
+        time:
+
+mode: single
+max_exceeded: silent
+
+trigger_variables:
+  bath_dew: !input bath_dew
+  bath_humidity: !input bath_humidity
+  ref_dew: !input ref_dew
+  on_delta: !input on_delta
+  off_delta: !input off_delta
+  humidity_high: !input humidity_high
+
+trigger:
+  - id: high
+    platform: template
+    value_template: >
+      {{ is_number(states(bath_dew)) and is_number(states(ref_dew))
+         and (states(bath_dew)|float - states(ref_dew)|float) >= on_delta|float }}
+    for: "00:01:00"
+  - id: high
+    platform: template
+    value_template: >
+      {{ is_number(states(bath_humidity))
+         and states(bath_humidity)|float >= humidity_high|float }}
+    for: "00:01:00"
+  - id: ha_start
+    platform: homeassistant
+    event: start
+
+variables:
+  extractor: !input extractor
+  bath_dew: !input bath_dew
+  ref_dew: !input ref_dew
+  off_delta: !input off_delta
+  off_delay: !input off_delay
+  min_run: !input min_run
+  max_run: !input max_run
+  window: !input window
+  night_start: !input night_start
+  night_end: !input night_end
+  started: "{{ now().timestamp() }}"
+
+action:
+  # After a Home Assistant restart the running cycle is lost: switch off for safety.
+  - if:
+      - condition: trigger
+        id: ha_start
+    then:
+      - service: switch.turn_off
+        target:
+          entity_id: !input extractor
+      - stop: "Home Assistant restarted: fan switched off for safety"
+
+  - condition: state
+    entity_id: !input extractor
+    state: "off"
+  - condition: not
+    conditions:
+      - condition: time
+        after: !input night_start
+        before: !input night_end
+  - condition: template
+    value_template: "{{ window == '' or not is_state(window, 'on') }}"
+
+  - service: switch.turn_on
+    target:
+      entity_id: !input extractor
+
+  # Wait until the difference stays below the threshold (or a sensor is lost),
+  # with the maximum run time as an upper bound.
+  - wait_for_trigger:
+      - platform: template
+        value_template: >
+          {{ not is_number(states(bath_dew)) or not is_number(states(ref_dew))
+             or (states(bath_dew)|float - states(ref_dew)|float) <= off_delta|float }}
+        for:
+          minutes: "{{ off_delay|int }}"
+    timeout:
+      minutes: "{{ max_run|int }}"
+    continue_on_timeout: true
+
+  # Honour the minimum run time.
+  # continue_on_error: a failure here must never prevent switching off.
+  - delay:
+      seconds: >
+        {{ [0, (min_run|float * 60) - (now().timestamp() - started|float)] | max | int }}
+    continue_on_error: true
+
+  - service: switch.turn_off
+    target:
+      entity_id: !input extractor
