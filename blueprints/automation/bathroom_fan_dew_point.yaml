@@ -1,7 +1,7 @@
 blueprint:
   name: Bathroom extractor fan by dew point
   description: >
-    Version 1.1. Turns the bathroom extractor fan on when the bathroom dew point
+    Version 1.1.1. Turns the bathroom extractor fan on when the bathroom dew point
     rises well above its own normal level (someone is showering) and turns it
     off when it returns to normal.
 
@@ -58,10 +58,14 @@ blueprint:
         number: {min: 1, max: 15, step: 0.5, unit_of_measurement: "°C"}
     off_delta:
       name: Rise to turn OFF (°C above the baseline)
-      description: Must be lower than the ON value.
+      description: >
+        Must be lower than the ON value. 0 means "back to the normal level" and
+        a negative value means "drier than normal". WARNING: a value at or below
+        0 may never be reached (for example on a very humid day), so the fan may
+        not stop until the maximum run time.
       default: 2
       selector:
-        number: {min: 0, max: 12, step: 0.5, unit_of_measurement: "°C"}
+        number: {min: -2, max: 12, step: 0.5, unit_of_measurement: "°C"}
     humidity_high:
       name: Emergency absolute humidity (%)
       description: Starts the fan if bathroom humidity stays at or above this value.

@@ -65,7 +65,7 @@ Select the fan switch, the bathroom dew point and humidity sensors, and the base
 | Baseline (24 h median) | – | The `statistics` helper from step 1 |
 | Window sensor | none | Optional; `on` = open, fan will not start |
 | Rise to turn ON | 3.5 °C | Bathroom dew point above the baseline |
-| Rise to turn OFF | 2 °C | Must hold for the off delay; keep it below the ON value |
+| Rise to turn OFF | 2 °C | Range −2 to 12 °C. Must hold for the off delay; keep it below the ON value. See the warning below about 0 or negative values |
 | Emergency absolute humidity | 80 % | Starts the fan regardless of the baseline |
 | Minutes below OFF before off | 3 | |
 | Minimum / maximum run time | 10 / 60 min | Maximum is a safety limit |
@@ -82,6 +82,8 @@ To tune a bathroom, graph its dew point together with the baseline helper for a 
 - **Misses short showers** → lower ON (it must stay above the resting noise of your bathroom).
 - **Runs until the maximum time** → raise OFF (it must be above the level the dew point settles at after a shower).
 - **Starts and stops repeatedly** → keep OFF clearly below ON, or increase the pause.
+
+**OFF at 0 or below.** An OFF value of 0 stops the fan when the bathroom is back to its normal level; a negative value stops it only when the bathroom is *drier* than normal (possible with ventilation, because the incoming air is usually drier). The lower the value, the harder it is to reach: **a value at or below 0 may never be reached (for example on a very humid day) and the fan will then run until the maximum run time.** Use it only if you have seen that the dew point of your bathroom falls clearly below its median with the fan running.
 
 If the fan is not connected yet, the dew point falls on its own, more slowly than it will with ventilation. A threshold that works without the fan will work at least as well with it.
 

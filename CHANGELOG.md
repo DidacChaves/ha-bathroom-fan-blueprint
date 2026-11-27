@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.1
+
+- The "Rise to turn OFF" input now accepts 0 and negative values, down to −2 °C (0 = back to the normal level, negative = drier than normal). The input description and the README warn that a value at or below 0 may never be reached, so the fan may run until the maximum run time.
+
 ## 1.1.0
 
 **Breaking.** The reference is now always the bathroom's own 24 h median dew point.
