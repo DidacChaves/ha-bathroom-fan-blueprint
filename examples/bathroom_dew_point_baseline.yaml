@@ -1,17 +1,18 @@
-# Example: the bathroom's own 24 h median dew point, used as the reference.
+# Example: the bathroom's own 24 h median dew point (the blueprint's baseline).
 #
-# Option 2 of the blueprint (no sensors in other rooms needed). A blueprint has
-# no history, so this has to be a separate sensor. Create one per bathroom.
+# A blueprint has no history, so the baseline has to be a separate sensor.
+# Create one per bathroom.
 #
-# Easiest way: Settings > Devices & services > Helpers > Create helper >
-# Statistics (entity = bathroom dew point, statistic = Arithmetic median,
-# max age = 24 hours, sampling size = 1000).
+# EASIEST (tested): Settings > Devices & services > Helpers > Create helper >
+# Statistics
+#   Entity ............ your bathroom dew point sensor
+#   Statistic ......... Arithmetic median
+#   Maximum age ....... 24 hours
+#   Sampling size ..... 1000
 #
-# The UI helper is the path that has been tested. The YAML below is the
-# equivalent for people who prefer it; check the Home Assistant docs for the
-# `statistics` integration if your version rejects it.
-#
-# Or in YAML (configuration.yaml, `sensor:` section):
+# YAML equivalent (configuration.yaml, `sensor:` section). Not tested on every
+# Home Assistant version: check the docs of the `statistics` integration if it
+# is rejected.
 sensor:
   - platform: statistics
     name: "Bathroom dew point baseline"
@@ -22,5 +23,5 @@ sensor:
       hours: 24
     sampling_size: 1000
     precision: 1
-# Then select sensor.bathroom_dew_point_baseline as the "Reference dew point
-# sensor" in the blueprint.
+# Then select sensor.bathroom_dew_point_baseline as the "Bathroom dew point
+# baseline" in the blueprint.

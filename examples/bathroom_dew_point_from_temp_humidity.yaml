@@ -1,0 +1,22 @@
+# Example: dew point from temperature and relative humidity.
+#
+# Only needed if your bathroom sensor does NOT report a dew point. Add it under
+# `template:` in your YAML configuration (or recreate it as a template helper in
+# the UI). Replace the two entity ids with your bathroom sensor's.
+#
+# Magnus formula (a = 17.62, b = 243.12 °C).
+- sensor:
+    - name: "Bathroom dew point"
+      unique_id: bathroom_dew_point
+      unit_of_measurement: "°C"
+      device_class: temperature
+      state_class: measurement
+      state: >
+        {% set t = states('sensor.bathroom_temperature') %}
+        {% set h = states('sensor.bathroom_humidity') %}
+        {% if is_number(t) and is_number(h) and h|float > 0 %}
+          {% set g = log(h|float/100) + (17.62*t|float)/(243.12+t|float) %}
+          {{ ((243.12*g)/(17.62-g))|round(1) }}
+        {% else %}
+          unavailable
+        {% endif %}

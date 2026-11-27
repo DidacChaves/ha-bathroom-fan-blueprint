@@ -1,76 +1,60 @@
 # Bathroom extractor fan by dew point (Home Assistant blueprint)
 
-Turns a bathroom extractor fan on when someone showers and off when the air is back to normal. It decides by comparing the **dew point of the bathroom** with a **reference dew point** that represents "what is normal here".
+Turns a bathroom extractor fan on when someone showers and off when the air is back to normal. It decides by comparing the **dew point of the bathroom** with **that bathroom's own normal level** (its 24 h median). One bathroom sensor is all you need: no sensors in other rooms.
 
 ## Why dew point instead of relative humidity?
 
-Relative humidity depends on temperature. During a shower the bathroom gets warmer *and* more humid, so RH ends up somewhere in the middle and then drops misleadingly fast once the room warms up, even though there is still plenty of steam. The dew point measures the actual amount of water vapour, so it is not affected by temperature and gives a much clearer signal (a shower typically raises it by 10 °C or more).
+Relative humidity depends on temperature. During a shower the bathroom gets warmer *and* more humid, so RH ends up somewhere in the middle and then drops misleadingly fast once the room warms up, even though there is still plenty of steam. The dew point measures the actual amount of water vapour, so it is not affected by temperature and gives a much clearer signal.
 
-Comparing against a reference (instead of a fixed humidity threshold) also copes with houses that are humid in winter, where an absolute "start at 70 %" rule would run all the time.
+## Why compare the bathroom with itself?
+
+Every bathroom is its own microclimate: warmer, differently ventilated, door open or closed. Comparing it with other rooms mixes in differences that have nothing to do with showering and gives a small margin between "someone showered" and "normal drift". The bathroom's **own 24 h median** adapts to the bathroom, the weather and the season by itself, so the same thresholds mean the same thing in every bathroom.
+
+The median is the value the bathroom is below half of the time and above the other half. A shower keeps the dew point high for minutes (up to about an hour without ventilation), so even 2–3 showers a day leave it far below 50 % of the day and the median barely moves. It would only be fooled by a bathroom that stays humid for more than about 12 hours a day.
+
+## How it works
+
+1. You create a **`statistics` helper** (24 h median of the bathroom dew point). A blueprint has no history, so this has to be a separate sensor, one per bathroom. See [Setup](#setup).
+2. The fan starts when `bathroom dew point − baseline` reaches the **ON** value for 1 minute (or when humidity reaches an emergency level).
+3. It stops when the rise stays below the **OFF** value for a few minutes, after a minimum run time and never later than the maximum run time.
+4. It then stays off for a pause. If the bathroom is still above the ON value afterwards, another cycle starts (at most 3 in a row).
 
 ## Features
 
-- Starts when `bathroom dew point − reference` stays above a threshold for 1 minute. Optional absolute-humidity backup trigger.
-- Stops when the difference stays below a lower threshold for N minutes, with a **minimum** and a hard **maximum** run time.
 - **Only switches off cycles it started itself**: if you turn the fan on manually, it will not turn it off.
-- **Quiet hours** (default 00:00–06:00): the fan will not start. A cycle already running is not interrupted.
+- **Quiet hours** (default 00:00–06:00): the fan will not start. A cycle already running is not interrupted. When quiet hours end the blueprint checks again, so a bathroom that is still humid gets its cycle.
 - **Optional window sensor**: while the window is open the fan is not started.
-- **Fail-safe**: a lost sensor ends the cycle and switches the fan off; a reference sensor that is `unavailable` prevents starting; after a Home Assistant restart the fan is switched off.
-- No notifications. Works with any `switch` (smart relay) and any bathroom sensor that reports dew point and humidity.
+- **Fail-safe**: a lost sensor ends the cycle and switches the fan off; an `unavailable` baseline prevents starting; after a Home Assistant restart the fan is switched off.
+- No notifications and no polling: it reacts to sensor changes plus a re-check when quiet hours end and after each cycle.
 
 ## Requirements
 
-1. A switch entity controlling the fan.
-2. A bathroom sensor with **dew point** and **humidity** entities. If your sensor does not report dew point, create a template sensor with the same Magnus formula used in [`examples/house_reference_dew_point.yaml`](examples/house_reference_dew_point.yaml).
-3. A **reference dew point**, in one of three ways (see below).
+- A **switch** entity controlling the fan (for example a smart relay).
+- A bathroom sensor with **dew point** and **humidity** entities. If yours reports only temperature and humidity, use [`examples/bathroom_dew_point_from_temp_humidity.yaml`](examples/bathroom_dew_point_from_temp_humidity.yaml) to create the dew point.
+- The **baseline helper** described below.
 
-## The reference dew point: three options
+## Setup
 
-The blueprint compares the bathroom with a reference. Pick **one** of these, from best to worst. If you select a sensor it is always used; the fixed value is only used when the sensor field is left empty.
+### 1. Create the baseline helper (once per bathroom)
 
-### Option 1 (best): average dew point of the rest of the house
+Settings → Devices & services → Helpers → Create helper → **Statistics**:
 
-Needs temperature **and** humidity sensors in a few other rooms (not bathrooms). It adapts to the weather and the season, and several bathrooms can share one sensor. See [`examples/house_reference_dew_point.yaml`](examples/house_reference_dew_point.yaml): edit the list of rooms and add it to your configuration, then select it as the reference sensor.
+- Entity: the bathroom dew point sensor
+- Statistic: **Arithmetic median** (`median`)
+- Maximum age: **24 hours**
+- Sampling size: **1000**
 
-### Option 2: the bathroom's own 24 h median (no other sensors needed)
+Home Assistant reads the recorder history on start-up, so the helper is usually useful immediately. While it has no value the fan will not start (fail-safe). A YAML equivalent is in [`examples/bathroom_dew_point_baseline.yaml`](examples/bathroom_dew_point_baseline.yaml).
 
-If you have no sensors elsewhere, use the bathroom itself as its own baseline: the **median** of its dew point over the last 24 hours. A shower lasts minutes, so the median barely moves and represents the bathroom's normal state. It adapts to the season by itself and also absorbs the fact that a bathroom usually sits a bit warmer and wetter than the rest of the house.
-
-**The blueprint cannot compute this itself**: a blueprint has no history, so you need a separate `statistics` sensor. Create it once per bathroom:
-
-- *UI:* Settings → Devices & services → Helpers → Create helper → **Statistics**. Entity: the bathroom dew point sensor. Statistic: **Arithmetic median** (`median`). Maximum age: **24 hours**. Sampling size: **1000**.
-- *YAML:* see [`examples/bathroom_dew_point_baseline.yaml`](examples/bathroom_dew_point_baseline.yaml).
-
-Then select that new sensor as the **reference sensor** in the blueprint.
-
-Things to know:
-
-- The statistics sensor reads Home Assistant's recorder history on start-up, so it is usually available immediately. While it has no value, the fan will **not** start (fail-safe).
-- If the bathroom is humid for more than about half of the day (fan broken, very heavy use), the median creeps up and detection gets less sensitive. The maximum run time still protects you.
-- Because the resting offset is about zero with this option, you can usually use **smaller thresholds** than the defaults, which were chosen for option 1. Tune from real showers.
-
-### Option 3 (last resort): a fixed value in °C
-
-Leave the reference sensor empty and type a dew point in the **Fixed reference dew point** field. It works, but read the problems below first.
-
-**Problems of a fixed value**
-
-- **It drifts with the seasons.** The normal dew point of a home can be around 6–10 °C in winter and 15–20 °C in summer. A value that is right today will be wrong in a few months.
-- **Too low a value → the fan runs without showers.** The bathroom already looks "above normal" on any humid summer day, so it starts (and keeps running until the maximum time).
-- **Too high a value → showers are missed.** In winter the bathroom never reaches the start threshold, so the fan never starts.
-- **Weather is not the only variable.** Cooking, drying laundry, an open door or a different number of people at home all move the real baseline, and a fixed number cannot follow them.
-- **It hides the resting offset.** The bathroom normally sits above the rest of the house; with a fixed value you have to account for this yourself or the "off" threshold may never be reached, so the fan only stops at the maximum time.
-- **Nothing warns you.** If the number becomes wrong, the symptoms (fan always on, fan never on) are easy to blame on something else.
-
-If you must use it: measure the bathroom's dew point when nobody has used it for hours, put that value in, keep generous thresholds, **revisit it every season**, and keep the humidity backup trigger enabled. Better: use option 2, which costs one helper and no extra sensors.
-
-## Installation
+### 2. Import the blueprint
 
 [![Open your Home Assistant instance and show the blueprint import dialog.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FDidacChaves%2Fha-bathroom-fan-blueprint%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fbathroom_fan_dew_point.yaml)
 
 Or copy `blueprints/automation/bathroom_fan_dew_point.yaml` to `config/blueprints/automation/<any-folder>/` and reload.
 
-Then create one automation per bathroom from the blueprint.
+### 3. Create one automation per bathroom
+
+Select the fan switch, the bathroom dew point and humidity sensors, and the baseline helper from step 1.
 
 ## Inputs
 
@@ -78,19 +62,39 @@ Then create one automation per bathroom from the blueprint.
 |---|---|---|
 | Extractor fan | – | `switch` that controls the fan |
 | Bathroom dew point / humidity | – | Bathroom sensor entities |
-| Reference dew point sensor | empty | Optional. Option 1 or 2 above. If empty, the fixed value is used |
-| Fixed reference dew point | 10 °C | Option 3. Only used when no reference sensor is selected |
+| Baseline (24 h median) | – | The `statistics` helper from step 1 |
 | Window sensor | none | Optional; `on` = open, fan will not start |
-| Difference to turn ON | 8 °C | Bathroom minus reference |
-| Difference to turn OFF | 5 °C | Must hold for the "off" delay |
-| Emergency absolute humidity | 80 % | Starts the fan regardless of the reference |
-| Minutes below threshold before off | 3 | |
+| Rise to turn ON | 3.5 °C | Bathroom dew point above the baseline |
+| Rise to turn OFF | 2 °C | Must hold for the off delay; keep it below the ON value |
+| Emergency absolute humidity | 80 % | Starts the fan regardless of the baseline |
+| Minutes below OFF before off | 3 | |
 | Minimum / maximum run time | 10 / 60 min | Maximum is a safety limit |
+| Pause between cycles | 15 min | Then a new cycle starts only if still above ON |
 | Quiet hours | 00:00–06:00 | No automatic start in this window |
 
 ## Tuning
 
-Defaults are estimates. With option 1 a bathroom often sits a bit warmer and wetter than the house even at rest (e.g. +1.5 °C), so the *off* threshold must be above that resting offset or the fan will only stop at the maximum time. Watch a few real showers (graph the bathroom dew point, the reference and their difference) and adjust per bathroom. If the fan starts and stops repeatedly, make the *off* threshold a bit lower than the *on* threshold.
+The defaults come from one bathroom, so treat them as a starting point. In that bathroom the dew point stayed within roughly −1.5 to +1.1 °C of its 24 h median at rest, and showers rose about 4 to 5 °C above it. With ON = 3.5 °C and OFF = 2 °C that gave one cycle per shower and no false starts.
+
+To tune a bathroom, graph its dew point together with the baseline helper for a few days:
+
+- **Starts without a shower** → raise ON.
+- **Misses short showers** → lower ON (it must stay above the resting noise of your bathroom).
+- **Runs until the maximum time** → raise OFF (it must be above the level the dew point settles at after a shower).
+- **Starts and stops repeatedly** → keep OFF clearly below ON, or increase the pause.
+
+If the fan is not connected yet, the dew point falls on its own, more slowly than it will with ventilation. A threshold that works without the fan will work at least as well with it.
+
+## Upgrading from 1.0
+
+Version 1.1 is a **breaking change**:
+
+- The "reference dew point sensor" (`ref_dew`) became the required `baseline_dew` input. Create the median helper and select it.
+- The "house average" option and the fixed-value option (`ref_manual`) were removed. The example house sensor is gone. Dew point relative to other rooms gave a small margin, and a fixed value drifts with the seasons.
+- New `pause between cycles` input, and the start now also re-checks when quiet hours end and after each cycle.
+- Review your ON/OFF values: they were relative to the house, now they are relative to the bathroom's own median (defaults 3.5 / 2).
+
+Version 1.0 remains available under [Releases](../../releases/tag/v1.0.0).
 
 ## Safety notes
 

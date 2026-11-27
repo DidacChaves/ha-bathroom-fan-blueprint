@@ -1,21 +1,20 @@
 blueprint:
   name: Bathroom extractor fan by dew point
   description: >
-    Turns the bathroom extractor fan on when the bathroom dew point rises well
-    above the rest of the house (someone is showering) and turns it off when it
-    returns to normal.
+    Version 1.1. Turns the bathroom extractor fan on when the bathroom dew point
+    rises well above its own normal level (someone is showering) and turns it
+    off when it returns to normal.
+
+
+    "Normal" is the bathroom's own 24 h median dew point. A blueprint has no
+    history, so you create that median once per bathroom as a `statistics`
+    helper (see the README). No sensors in other rooms are needed.
 
 
     Only controls the cycles it started itself: if you switch the fan on by hand,
-    the blueprint will not switch it off. Includes a hard maximum run time, an
-    optional quiet-hours window and an optional window contact sensor.
-
-
-    The reference dew point ("what is normal here") can come from, in order of
-    preference: (1) a sensor with the average dew point of the rest of the house,
-    (2) a sensor with the bathroom's own 24 h median (a `statistics` helper), or
-    (3) a fixed value in °C as a last resort. See the README for details and for
-    the problems of a fixed value.
+    the blueprint will not switch it off. Includes a minimum and a maximum run
+    time, a pause between cycles, optional quiet hours and an optional window
+    contact sensor.
   source_url: https://github.com/DidacChaves/ha-bathroom-fan-blueprint/blob/main/blueprints/automation/bathroom_fan_dew_point.yaml
   domain: automation
   input:
@@ -36,26 +35,15 @@ blueprint:
         entity:
           domain: sensor
           device_class: humidity
-    ref_dew:
-      name: Reference dew point sensor (optional)
+    baseline_dew:
+      name: Bathroom dew point baseline (24 h median)
       description: >
-        Sensor with the "normal" dew point: the average of the rest of the house,
-        or the bathroom's own 24 h median (statistics helper). Leave empty to use
-        the fixed value below instead.
-      default: ""
+        A `statistics` helper on the bathroom dew point sensor: characteristic
+        "Arithmetic median", maximum age 24 hours. See the README.
       selector:
         entity:
           domain: sensor
           device_class: temperature
-    ref_manual:
-      name: Fixed reference dew point (°C)
-      description: >
-        Only used when no reference sensor is selected. Warning: the real dew
-        point of a home changes with the seasons, so a fixed value needs
-        re-tuning (see the README). Prefer a sensor.
-      default: 10
-      selector:
-        number: {min: -5, max: 30, step: 0.5, unit_of_measurement: "°C"}
     window:
       name: Window sensor (optional)
       description: "'on' = open. While the window is open the fan is not started."
@@ -64,15 +52,16 @@ blueprint:
         entity:
           domain: binary_sensor
     on_delta:
-      name: Difference to turn ON (°C above the house)
-      default: 8
+      name: Rise to turn ON (°C above the baseline)
+      default: 3.5
       selector:
-        number: {min: 2, max: 20, step: 0.5, unit_of_measurement: "°C"}
+        number: {min: 1, max: 15, step: 0.5, unit_of_measurement: "°C"}
     off_delta:
-      name: Difference to turn OFF (°C above the house)
-      default: 5
+      name: Rise to turn OFF (°C above the baseline)
+      description: Must be lower than the ON value.
+      default: 2
       selector:
-        number: {min: 0, max: 15, step: 0.5, unit_of_measurement: "°C"}
+        number: {min: 0, max: 12, step: 0.5, unit_of_measurement: "°C"}
     humidity_high:
       name: Emergency absolute humidity (%)
       description: Starts the fan if bathroom humidity stays at or above this value.
@@ -80,7 +69,7 @@ blueprint:
       selector:
         number: {min: 60, max: 100, step: 1, unit_of_measurement: "%"}
     off_delay:
-      name: Minutes below the threshold before turning off
+      name: Minutes below the OFF value before turning off
       default: 3
       selector:
         number: {min: 1, max: 30, unit_of_measurement: min}
@@ -94,9 +83,20 @@ blueprint:
       default: 60
       selector:
         number: {min: 10, max: 240, unit_of_measurement: min}
+    cooldown:
+      name: Pause between cycles (min)
+      description: >
+        After a cycle the fan stays off at least this long. Then, if the bathroom
+        is still above the ON value, a new cycle starts (at most 3 in a row).
+      default: 15
+      selector:
+        number: {min: 0, max: 120, unit_of_measurement: min}
     night_start:
       name: Quiet hours start
-      description: The fan will not start between start and end. A cycle already running is not interrupted.
+      description: >
+        The fan will not start between start and end. A cycle already running is
+        not interrupted. When quiet hours end the blueprint checks again, so a
+        bathroom that is still humid gets its cycle.
       default: "00:00:00"
       selector:
         time:
@@ -112,19 +112,17 @@ max_exceeded: silent
 trigger_variables:
   bath_dew: !input bath_dew
   bath_humidity: !input bath_humidity
-  ref_dew: !input ref_dew
-  ref_manual: !input ref_manual
+  baseline_dew: !input baseline_dew
   on_delta: !input on_delta
-  off_delta: !input off_delta
   humidity_high: !input humidity_high
 
 trigger:
+  # The rise crosses the ON value (and stays there for 1 minute).
   - id: high
     platform: template
     value_template: >
-      {% set r = states(ref_dew) if ref_dew != '' else ref_manual %}
-      {{ is_number(states(bath_dew)) and is_number(r)
-         and (states(bath_dew)|float - r|float) >= on_delta|float }}
+      {{ is_number(states(bath_dew)) and is_number(states(baseline_dew))
+         and (states(bath_dew)|float - states(baseline_dew)|float) >= on_delta|float }}
     for: "00:01:00"
   - id: high
     platform: template
@@ -132,6 +130,12 @@ trigger:
       {{ is_number(states(bath_humidity))
          and states(bath_humidity)|float >= humidity_high|float }}
     for: "00:01:00"
+  # A template trigger only fires when the condition turns true. If the bathroom
+  # was already above the ON value while quiet hours were active, nothing would
+  # fire when they end, so check again at that moment.
+  - id: recheck
+    platform: time
+    at: !input night_end
   - id: ha_start
     platform: homeassistant
     event: start
@@ -139,16 +143,16 @@ trigger:
 variables:
   extractor: !input extractor
   bath_dew: !input bath_dew
-  ref_dew: !input ref_dew
-  ref_manual: !input ref_manual
+  bath_humidity: !input bath_humidity
+  baseline_dew: !input baseline_dew
+  on_delta: !input on_delta
   off_delta: !input off_delta
+  humidity_high: !input humidity_high
   off_delay: !input off_delay
   min_run: !input min_run
   max_run: !input max_run
+  cooldown: !input cooldown
   window: !input window
-  night_start: !input night_start
-  night_end: !input night_end
-  started: "{{ now().timestamp() }}"
 
 action:
   # After a Home Assistant restart the running cycle is lost: switch off for safety.
@@ -171,32 +175,66 @@ action:
         before: !input night_end
   - condition: template
     value_template: "{{ window == '' or not is_state(window, 'on') }}"
+  # Is the bathroom above the ON value right now? (also covers the re-check)
+  - condition: template
+    value_template: >
+      {{ (is_number(states(bath_dew)) and is_number(states(baseline_dew))
+          and (states(bath_dew)|float - states(baseline_dew)|float) >= on_delta|float)
+         or (is_number(states(bath_humidity))
+             and states(bath_humidity)|float >= humidity_high|float) }}
 
-  - service: switch.turn_on
-    target:
-      entity_id: !input extractor
+  - repeat:
+      sequence:
+        - variables:
+            started: "{{ now().timestamp() }}"
+        - service: switch.turn_on
+          target:
+            entity_id: !input extractor
 
-  # Wait until the difference stays below the threshold (or a sensor is lost),
-  # with the maximum run time as an upper bound.
-  - wait_for_trigger:
-      - platform: template
-        value_template: >
-          {% set r = states(ref_dew) if ref_dew != '' else ref_manual %}
-          {{ not is_number(states(bath_dew)) or not is_number(r)
-             or (states(bath_dew)|float - r|float) <= off_delta|float }}
-        for:
-          minutes: "{{ off_delay|int }}"
-    timeout:
-      minutes: "{{ max_run|int }}"
-    continue_on_timeout: true
+        # Wait until the rise stays below the OFF value (or a sensor is lost),
+        # with the maximum run time as an upper bound.
+        - wait_for_trigger:
+            - platform: template
+              value_template: >
+                {{ not is_number(states(bath_dew)) or not is_number(states(baseline_dew))
+                   or (states(bath_dew)|float - states(baseline_dew)|float) <= off_delta|float }}
+              for:
+                minutes: "{{ off_delay|int }}"
+          timeout:
+            minutes: "{{ max_run|int }}"
+          continue_on_timeout: true
 
-  # Honour the minimum run time.
-  # continue_on_error: a failure here must never prevent switching off.
-  - delay:
-      seconds: >
-        {{ [0, (min_run|float * 60) - (now().timestamp() - started|float)] | max | int }}
-    continue_on_error: true
+        # Honour the minimum run time.
+        # continue_on_error: a failure here must never prevent switching off.
+        - delay:
+            seconds: >
+              {{ [0, (min_run|float * 60) - (now().timestamp() - started|float)] | max | int }}
+          continue_on_error: true
 
-  - service: switch.turn_off
-    target:
-      entity_id: !input extractor
+        - service: switch.turn_off
+          target:
+            entity_id: !input extractor
+
+        # Pause between cycles (the automation stays busy, so new triggers are ignored).
+        - delay:
+            minutes: "{{ cooldown|int }}"
+      # Stop looping when: 3 cycles in a row, the bathroom is back to normal,
+      # quiet hours started, or the window was opened.
+      until:
+        - condition: or
+          conditions:
+            - condition: template
+              value_template: "{{ repeat.index >= 3 }}"
+            - condition: not
+              conditions:
+                - condition: template
+                  value_template: >
+                    {{ (is_number(states(bath_dew)) and is_number(states(baseline_dew))
+                        and (states(bath_dew)|float - states(baseline_dew)|float) >= on_delta|float)
+                       or (is_number(states(bath_humidity))
+                           and states(bath_humidity)|float >= humidity_high|float) }}
+            - condition: time
+              after: !input night_start
+              before: !input night_end
+            - condition: template
+              value_template: "{{ window != '' and is_state(window, 'on') }}"
